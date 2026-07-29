@@ -6,7 +6,12 @@ css=/cgit-css/cgit.css
 logo=/cgit-css/ruby.png
 root-title=The Ruby Language git repositories
 
-cache-size=1000
+# Anonymous browsing is all cgit serves, so every rendered page is cacheable.
+# 1000 entries were exhausted by scrapers walking distinct commits; the URLs
+# carrying a SHA now redirect to GitHub, which leaves a working set small
+# enough for the cache to actually hit. Snapshots stay off (no "snapshots="
+# line), so tar/zip generation is never a load source.
+cache-size=10000
 branch-sort=age
 enable-index-owner=0
 virtual-root=/

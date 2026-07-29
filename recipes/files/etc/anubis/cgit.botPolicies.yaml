@@ -1,0 +1,120 @@
+# Bot policy for the Anubis instance in front of cgit.
+#
+# Rules are evaluated top to bottom and the first ALLOW/DENY/CHALLENGE wins, so
+# everything that must never see a challenge is listed first. WEIGH does not
+# end evaluation; it only adjusts the request weight that the thresholds at the
+# bottom of this file turn into an action.
+#
+# "(data)/..." imports are compiled into the anubis binary. The same files are
+# unpacked under /usr/share/doc/anubis/data if you want to read them.
+
+bots:
+  # Clone over HTTPS. cgit serves the dumb HTTP protocol (enable-http-clone=1
+  # in cgitrc), so a clone is plain GETs of HEAD, info/refs and objects/.
+  # Apache routes these straight to cgit and they never reach Anubis; this rule
+  # is the backstop in case that routing is ever changed.
+  - name: allow-git-http-paths
+    action: ALLOW
+    path_regex: ^/[^/]+\.git/(?:HEAD|info/refs|objects/.*|git-upload-pack|git-receive-pack)$
+
+  # git 2.54 sends "User-Agent: git/2.54.0", "Accept: */*", "Pragma: no-cache"
+  # and no Cache-Control header, so the bundled (data)/clients/git.yaml rule
+  # does not match it. Match on the user agent alone instead.
+  - name: allow-git-clients
+    action: ALLOW
+    expression: >-
+      userAgent.startsWith("git/") ||
+      userAgent.startsWith("go-git") ||
+      userAgent.startsWith("JGit/") ||
+      userAgent.startsWith("JGit-") ||
+      userAgent.contains("libgit")
+
+  # Feed readers cannot solve a challenge.
+  - name: allow-atom-feeds
+    action: ALLOW
+    path_regex: ^/[^/]+\.git/atom/?$
+
+  # cgit's stylesheet and logo. Static files, no reason to gate them.
+  - name: allow-cgit-assets
+    action: ALLOW
+    path_regex: ^/cgit-css/.*$
+
+  # /.well-known/ (certbot), favicon.ico, robots.txt, sitemap.xml.
+  - import: (data)/common/keep-internet-working.yaml
+
+  # Headless browsers, Cloudflare Workers, scraper clouds.
+  - import: (data)/bots/_deny-pathological.yaml
+
+  # Everything that identifies itself as an AI crawler or agent.
+  - import: (data)/meta/ai-block-aggressive.yaml
+
+  # Search engines we want to keep indexing us, verified by published IP range
+  # where the operator publishes one.
+  - import: (data)/crawlers/_allow-good.yaml
+
+  - import: (data)/clients/x-firefox-ai.yaml
+  - import: (data)/crawlers/xai.yaml
+
+  # Anything left that claims to be a desktop browser. This is where the bulk
+  # of the scraper traffic lands: roughly 85% of it forges a Chrome, Firefox or
+  # Edge user agent, so a claimed browser earns a challenge rather than a pass.
+  - name: generic-browser
+    user_agent_regex: >-
+      Mozilla|Opera
+    action: WEIGH
+    weight:
+      adjust: 10
+
+dnsbl: false
+
+honeypot:
+  enabled: true
+  implementation: naive
+
+# Scrapers back off when they get an HTTP 200, so challenges and denials are
+# served as 200 on purpose. This is the upstream default.
+status_codes:
+  CHALLENGE: 200
+  DENY: 200
+
+store:
+  backend: memory
+  parameters: {}
+
+thresholds:
+  - name: minimal-suspicion
+    expression: weight <= 0
+    action: ALLOW
+  - name: mild-suspicion
+    expression:
+      all:
+        - weight > 0
+        - weight < 10
+    action: CHALLENGE
+    challenge:
+      algorithm: metarefresh
+      difficulty: 1
+  - name: moderate-suspicion
+    expression:
+      all:
+        - weight >= 10
+        - weight < 20
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 2
+  - name: mild-proof-of-work
+    expression:
+      all:
+        - weight >= 20
+        - weight < 30
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 4
+  - name: extreme-suspicion
+    expression: weight >= 30
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 6
