@@ -97,7 +97,7 @@ class TestPreReceive < Test::Unit::TestCase
     make_commit("mame", "mame@ruby-lang.org", "e")
     err = git("push") rescue $!
     assert_match(
-      /A merge commit is prohibited\./,
+      /A merge commit is prohibited for refs\/heads\/master\./,
       err.message
     )
   end
