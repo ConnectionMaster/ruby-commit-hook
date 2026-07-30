@@ -42,6 +42,41 @@ bin/hocho apply -n git.ruby-lang.org
 bin/hocho apply git.ruby-lang.org
 ```
 
+## Crawler defense
+
+Scrapers forging desktop browser user agents took the site down in June and
+July 2026. Fastly is not an option because DNS has to keep pointing at the host
+that accepts `git push` over SSH, so the defense runs on the box.
+
+Requests reach cgit through four stages:
+
+```text
+client -> apache :443 -> anubis :8923 -> apache :3001 -> cgit.cgi
+```
+
+1. `:443` (`sites-available/git.ruby-lang.org.conf`) terminates TLS, serves
+   `robots.txt`, 403s the crawlers that name themselves, and 302s the browse
+   URLs it can hand to GitHub. Whatever is left it proxies.
+2. Git clone requests (`HEAD`, `info/refs`, `objects/`) and `/cgit-css/` skip
+   Anubis and go straight to `:3001`. cgit serves the dumb HTTP clone protocol,
+   and `git` cannot solve a challenge.
+3. Anubis (`anubis@cgit.service`, `/etc/anubis/cgit.botPolicies.yaml`) gives
+   everything else a proof-of-work challenge, weighted by how much the client
+   looks like a scraper.
+4. `:3001` (`sites-available/cgit-backend.conf`) is loopback-only and runs cgit.
+
+Checking on it:
+
+```bash
+systemctl status anubis@cgit
+journalctl -u anubis@cgit -f
+curl -s http://127.0.0.1:9090/metrics | grep anubis_challenges
+```
+
+To take Anubis out of the path, point the last three `RewriteRule` lines of the
+`:443` vhost back at `http://127.0.0.1:3001/` and reload Apache. Everything
+else keeps working.
+
 ### TODO for recipes for git.ruby-lang.org
 
 * How to store `ssh_host_key*` and `sshd_config` safely?

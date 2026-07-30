@@ -1,2 +1,12 @@
+# Google-Extended and Applebot-Extended are robots.txt-only opt-out tokens.
+# They never appear in a User-Agent header, so this file is the only place they
+# can be expressed. Every other crawler is covered by the blanket rule below,
+# and the ones that ignore it are Anubis' problem.
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+
 User-agent: *
 Disallow: /

@@ -1,0 +1,140 @@
+# Bot policy for the Anubis instance in front of cgit.
+#
+# Rules are evaluated top to bottom and the first ALLOW/DENY/CHALLENGE wins, so
+# everything that must never see a challenge is listed first. WEIGH does not
+# end evaluation; it only adjusts the request weight that the thresholds at the
+# bottom of this file turn into an action.
+#
+# "(data)/..." imports are compiled into the anubis binary. The same files are
+# unpacked under /usr/share/doc/anubis/data if you want to read them.
+
+bots:
+  # Clone over HTTPS. cgit serves the dumb HTTP protocol (enable-http-clone=1
+  # in cgitrc), so a clone is plain GETs of HEAD, info/refs and objects/.
+  # Apache routes these straight to cgit and they never reach Anubis; this rule
+  # is the backstop in case that routing is ever changed.
+  - name: allow-git-http-paths
+    action: ALLOW
+    path_regex: ^/[^/]+\.git/(?:HEAD|info/refs|objects/.*|git-upload-pack|git-receive-pack)$
+
+  # git 2.54 sends "User-Agent: git/2.54.0", "Accept: */*", "Pragma: no-cache"
+  # and no Cache-Control header, so the bundled (data)/clients/git.yaml rule
+  # does not match it. Match on the user agent alone instead.
+  - name: allow-git-clients
+    action: ALLOW
+    expression: >-
+      userAgent.startsWith("git/") ||
+      userAgent.startsWith("go-git") ||
+      userAgent.startsWith("JGit/") ||
+      userAgent.startsWith("JGit-") ||
+      userAgent.contains("libgit")
+
+  # Feed readers cannot solve a challenge.
+  - name: allow-atom-feeds
+    action: ALLOW
+    path_regex: ^/[^/]+\.git/atom/?$
+
+  # cgit's stylesheet and logo. Static files, no reason to gate them.
+  - name: allow-cgit-assets
+    action: ALLOW
+    path_regex: ^/cgit-css/.*$
+
+  # /.well-known/ (certbot), favicon.ico, robots.txt, sitemap.xml.
+  - import: (data)/common/keep-internet-working.yaml
+
+  # Headless browsers, Cloudflare Workers, scraper clouds.
+  - import: (data)/bots/_deny-pathological.yaml
+
+  # Everything that identifies itself as an AI crawler or agent.
+  - import: (data)/meta/ai-block-aggressive.yaml
+
+  # Search engines we want to keep indexing us, verified by published IP range
+  # where the operator publishes one.
+  - import: (data)/crawlers/_allow-good.yaml
+
+  - import: (data)/clients/x-firefox-ai.yaml
+  - import: (data)/crawlers/xai.yaml
+
+  # Anything left that claims to be a desktop browser. This is where the bulk
+  # of the scraper traffic lands: of the ~940k requests a day the redirects
+  # currently absorb, 98% forge a Chrome, Firefox or Edge user agent and only
+  # 1.9% admit to being a crawler. So a claimed browser earns a challenge
+  # rather than a pass.
+  #
+  # 20 rather than upstream's 10, which lands on difficulty 2. Two leading
+  # zeroes is ~256 hashes, free for anything that reimplements the hash. 20
+  # lands on difficulty 4 (~65k hashes), still imperceptible in a browser.
+  - name: generic-browser
+    user_agent_regex: >-
+      Mozilla|Opera
+    action: WEIGH
+    weight:
+      adjust: 20
+
+  # Escalate to difficulty 6 when the box is actually struggling. Anubis runs
+  # on the same host as cgit, so the load average is a real signal.
+  #
+  # Threshold from measurement, not upstream's example of 10.0: this host has 4
+  # cores, sits at 0.03 to 1.3 in normal operation, and reached load_1m 17.9 /
+  # load_15m 48.6 during the outage of 2026-07-18 to 07-21. 10.0 would only
+  # fire once the box is already failing. 3.0 fires well before that and well
+  # above anything normal traffic produces.
+  - name: high-load-average
+    action: WEIGH
+    expression: load_1m >= 3.0
+    weight:
+      adjust: 20
+
+dnsbl: false
+
+honeypot:
+  enabled: true
+  implementation: naive
+
+# Scrapers back off when they get an HTTP 200, so challenges and denials are
+# served as 200 on purpose. This is the upstream default.
+status_codes:
+  CHALLENGE: 200
+  DENY: 200
+
+store:
+  backend: memory
+  parameters: {}
+
+thresholds:
+  - name: minimal-suspicion
+    expression: weight <= 0
+    action: ALLOW
+  - name: mild-suspicion
+    expression:
+      all:
+        - weight > 0
+        - weight < 10
+    action: CHALLENGE
+    challenge:
+      algorithm: metarefresh
+      difficulty: 1
+  - name: moderate-suspicion
+    expression:
+      all:
+        - weight >= 10
+        - weight < 20
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 2
+  - name: mild-proof-of-work
+    expression:
+      all:
+        - weight >= 20
+        - weight < 30
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 4
+  - name: extreme-suspicion
+    expression: weight >= 30
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 6
