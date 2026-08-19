@@ -48,6 +48,16 @@ bots:
   # Everything that identifies itself as an AI crawler or agent.
   - import: (data)/meta/ai-block-aggressive.yaml
 
+  # Self-identified scraping browsers seen hammering cgit from residential
+  # proxy pools since 2026-08-08 (Lightpanda peaked at 135k requests a day
+  # from ~100k distinct IPs). Lightpanda is a headless browser that executes
+  # JavaScript, so a challenge would likely be solved; deny outright.
+  - name: deny-scraper-browsers
+    action: DENY
+    expression: >-
+      userAgent.startsWith("Lightpanda") ||
+      userAgent.startsWith("spider/")
+
   # Search engines we want to keep indexing us, verified by published IP range
   # where the operator publishes one.
   - import: (data)/crawlers/_allow-good.yaml
@@ -55,19 +65,21 @@ bots:
   - import: (data)/clients/x-firefox-ai.yaml
   - import: (data)/crawlers/xai.yaml
 
-  # Anything left that claims to be a desktop browser. This is where the bulk
-  # of the scraper traffic lands: of the ~940k requests a day the redirects
-  # currently absorb, 98% forge a Chrome, Firefox or Edge user agent and only
-  # 1.9% admit to being a crawler. So a claimed browser earns a challenge
-  # rather than a pass.
+  # Anything not explicitly allowed above earns the challenge. This used to
+  # match only user agents claiming to be a desktop browser (Mozilla|Opera),
+  # but from 2026-08-08 to 08-19 scrapers whose user agents match neither
+  # word walked straight through with weight 0: 958k requests, 72% of all
+  # traffic that reached cgit. Challenge by default instead.
+  #
+  # This also challenges curl and wget, so fetching /plain/ URLs with them no
+  # longer works; use a clone or GitHub raw URLs for that.
   #
   # 20 rather than upstream's 10, which lands on difficulty 2. Two leading
   # zeroes is ~256 hashes, free for anything that reimplements the hash. 20
   # lands on difficulty 4 (~65k hashes), still imperceptible in a browser.
-  - name: generic-browser
-    user_agent_regex: >-
-      Mozilla|Opera
+  - name: default-suspicion
     action: WEIGH
+    expression: "true"
     weight:
       adjust: 20
 
