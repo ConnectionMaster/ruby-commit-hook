@@ -33,6 +33,17 @@ link '/etc/apache2/conf-enabled/cgit.conf' do
   to '../conf-available/cgit.conf'
 end
 
+remote_file '/etc/apache2/conf-available/mpm-tuning.conf' do
+  mode  '644'
+  owner 'root'
+  notifies :restart, 'service[apache2]'
+end
+
+link '/etc/apache2/conf-enabled/mpm-tuning.conf' do
+  to '../conf-available/mpm-tuning.conf'
+  notifies :restart, 'service[apache2]'
+end
+
 %w[git svn].each do |subdomain|
   remote_file "/etc/apache2/sites-available/#{subdomain}.ruby-lang.org.conf" do
     mode  '644'
