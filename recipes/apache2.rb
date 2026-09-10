@@ -76,3 +76,13 @@ end
     end
   end
 end
+
+# root's crontab carried "20 * * * * systemctl restart apache2" from before
+# Anubis, outside this repository. It fixed nothing: children settle at 25 MB
+# and never leak. It caused harm instead. 57 of the 91 AH00484 (MaxRequestWorkers
+# exhausted) events in the last two weeks landed within eight minutes of it,
+# because the 63,000 requests an hour arriving at the front door all reconnect
+# at once against StartServers 2.
+file '/var/spool/cron/crontabs/root' do
+  action :delete
+end
